@@ -1,0 +1,6 @@
+# dataset.yaml
+train: ../Waymo_YOLO/train  # Ruta a tus imágenes de entrenamiento
+val: ../Waymo_YOLO/validation      # Ruta a tus imágenes de validación
+
+nc: 3  # Número de clases, por ejemplo, vehículos
+names: ['vehicle', 'pedestrian', 'cyclist']  # Las clases
