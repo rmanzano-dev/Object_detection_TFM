@@ -174,3 +174,4 @@ Waymo_YOLO_results/
 fasterRCNN-NuScenes_models/
 NuScenes_FasterRCNN_PT/
 NuScenes_FasterRCNN/
+Waymo_FasterRCNN/

@@ -48,6 +48,5 @@ def get_args():
         help="Name of the experiment to save checkpoint"
     )
 
-
     args = parser.parse_args()
     return args
