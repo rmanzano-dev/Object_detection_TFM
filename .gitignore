@@ -175,3 +175,5 @@ fasterRCNN-NuScenes_models/
 NuScenes_FasterRCNN_PT/
 NuScenes_FasterRCNN/
 Waymo_FasterRCNN/
+Waymo_FasterRCNN_results/
+**.png

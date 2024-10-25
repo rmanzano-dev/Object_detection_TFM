@@ -69,9 +69,7 @@ def calculate_map_per_class(predictions, targets, num_classes, iou_threshold=0.5
         precision_per_class[class_id] = precision
         recall_per_class[class_id] = recall
 
-        # For AP, if we only compute for a fixed IoU threshold (50%), AP = precision at recall = 1.
-        # For a more complex AP calculation (e.g., for mAP), you would calculate precision at multiple recall thresholds.
-        ap_per_class[class_id] = precision  # Simplification: AP = Precision at recall 1 for mAP50
+        ap_per_class[class_id] = compute_ap(torch.tensor([precision]), torch.tensor([recall]))
 
     return precision_per_class, recall_per_class, ap_per_class
 
@@ -146,3 +144,19 @@ def calculate_map50(predictions, targets, iou_threshold=0.5):
     precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0
     recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0
     return precision, recall
+
+import torch
+
+def compute_ap(precision, recall):
+    # Ensure precision and recall are sorted in descending order of recall
+    sorted_indices = torch.argsort(recall, descending=True)
+    precision = precision[sorted_indices]
+    recall = recall[sorted_indices]
+
+    # Insert a zero at the beginning of the recall and precision arrays
+    recall = torch.cat([torch.tensor([0]), recall])
+    precision = torch.cat([torch.tensor([0]), precision])
+
+    # Compute AP using the trapezoidal rule
+    ap = torch.trapz(precision, recall)
+    return ap.item()

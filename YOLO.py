@@ -27,7 +27,7 @@ elif args.mode == "val":
     model = YOLO(f'{args.input_path}/weights/best.pt')  # Replace with the path to your trained model
 
     # Validate the model on your dataset
-    results = model.val(data='conf/waymo_data.yaml',project= args.output_path, name="validation_data")  # Replace with the path to your dataset config
+    results = model.val(data='conf/nuScenes_data.yaml',project= args.output_path, name="validation_data")  # Replace with the path to your dataset config
 
     # Get class names from the dataset
     class_names = results.names

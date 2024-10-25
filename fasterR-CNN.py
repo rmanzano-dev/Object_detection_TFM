@@ -67,7 +67,7 @@ class YoloToFasterRCNNDataset(torch.utils.data.Dataset):
         # Load corresponding YOLOv8 annotation
         annotation_file = os.path.join(self.annotations_dir, self.image_files[idx].replace('.jpg', '.txt').replace('.png', '.txt'))
         boxes, labels = load_yolov8_annotation(annotation_file, img_width, img_height)
-
+        
         # Convert the image to a tensor
         img = torchvision.transforms.functional.to_tensor(img)
 
@@ -117,7 +117,9 @@ def train_one_epoch(model, optimizer, data_loader, device):
         # Forward pass
         loss_dict = model(images, targets)
         losses = sum(loss for loss in loss_dict.values())
-
+        if torch.isnan(losses):
+            print("NaN detected in losses")
+            break
 
         # Zero the gradients
         optimizer.zero_grad()
@@ -174,7 +176,7 @@ def train_faster_rcnn_with_validation(model, train_loader, val_loader, num_epoch
     model.to(device)
     
     # Define the optimizer (use SGD with momentum)
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.95, weight_decay=0.0005)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.9, weight_decay=0.0005)
     
     for epoch in range(num_epochs):
         print(f"Epoch {epoch+1}/{num_epochs}")
@@ -189,6 +191,10 @@ def train_faster_rcnn_with_validation(model, train_loader, val_loader, num_epoch
         metrics = {}
         for k in precision_per_class.keys():
             metrics[k] = [precision_per_class[k], recall_per_class[k], ap_per_class[k]]
+
+        metrics["precision"] = float(torch.mean(torch.tensor(list(precision_per_class.values()), dtype=float)))
+        metrics["recall"] = float(torch.mean(torch.tensor(list(recall_per_class.values()), dtype=float)))
+        metrics["map50"] = float(torch.mean(torch.tensor(list(ap_per_class.values()), dtype=float)))
 
         with open(f"{output_path}/fasterRCNN_ep-{epoch + 1}_json", "w") as outfile: 
             json.dump(metrics, outfile)
@@ -234,7 +240,7 @@ if args.mode == "val":
 
     model.to(device)
     # class_names = ['__background__', 'VEHICLE', 'PEDESTRIAN', 'CYCLIST']
-    # precision_per_class, recall_per_class, ap_per_class = validate_one_epoch(model, val_loader, device, num_classes)
+    precision_per_class, recall_per_class, ap_per_class = validate_one_epoch(model, val_loader, device, num_classes)
 
 elif args.mode == "predict":
     model.load_state_dict(torch.load("fasterRCNNPT_ep-15_best.pth"))
