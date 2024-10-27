@@ -11,7 +11,7 @@ from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from tqdm import tqdm
 
 from argparser import get_args
-from metrics import calculate_map_per_class
+from metrics import get_metrics, get_precision_recall
 from utils import draw_boxes_opencv
 
 
@@ -143,19 +143,29 @@ def validate_one_epoch(model, data_loader, device, num_classes):
         for images, targets in tqdm(data_loader):
             images = list(image.to(device) for image in images)
             targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
-            
             # Forward pass
             outputs = model(images, targets)
-            all_predictions.append(outputs)
-            all_targets.append(targets)
+
+            all_predictions.append(outputs[0])
+            all_targets.append(targets[0])
             # print(loss_dict[0].keys())
             # losses = sum(loss for loss in loss_dict.values())
 
             # total_val_loss += losses.item()
 
-    precision_per_class, recall_per_class, ap_per_class = calculate_map_per_class(all_predictions, all_targets, num_classes)
 
-    return precision_per_class, recall_per_class, ap_per_class
+    metrics = get_metrics(all_predictions, all_targets)
+    keep = ["map", "map_50", "map_per_class", "classes"]
+    final_metrics = {k: metrics[k] for k in keep}
+
+    final_metrics["precision"], final_metrics["recall"] = get_precision_recall(all_predictions, all_targets)
+    
+    for key, value in final_metrics.items():
+        if type(value) == torch.Tensor:
+            final_metrics[key] = value.cpu().tolist()
+
+    return final_metrics 
+
 
 def preprocess_image(image_path):
     # Open the image
@@ -186,15 +196,7 @@ def train_faster_rcnn_with_validation(model, train_loader, val_loader, num_epoch
         print(f"Training Loss: {train_loss:.4f}")
         
         # Validation
-        precision_per_class, recall_per_class, ap_per_class = validate_one_epoch(model, val_loader, device, num_classes=num_classes)
-
-        metrics = {}
-        for k in precision_per_class.keys():
-            metrics[k] = [precision_per_class[k], recall_per_class[k], ap_per_class[k]]
-
-        metrics["precision"] = float(torch.mean(torch.tensor(list(precision_per_class.values()), dtype=float)))
-        metrics["recall"] = float(torch.mean(torch.tensor(list(recall_per_class.values()), dtype=float)))
-        metrics["map50"] = float(torch.mean(torch.tensor(list(ap_per_class.values()), dtype=float)))
+        metrics = validate_one_epoch(model, val_loader, device, num_classes=num_classes)
 
         with open(f"{output_path}/fasterRCNN_ep-{epoch + 1}_json", "w") as outfile: 
             json.dump(metrics, outfile)
@@ -236,11 +238,11 @@ num_epochs = args.epochs
 
 if args.mode == "val":
 
-    model.load_state_dict(torch.load("NuScenes-metrics/fasterRCNNPT_ep-15_best.pth"))
+    model.load_state_dict(torch.load("NuScenes_FasterRCNNFinal_results_PT/fasterRCNN_ep-30_best.pth"))
 
     model.to(device)
     # class_names = ['__background__', 'VEHICLE', 'PEDESTRIAN', 'CYCLIST']
-    precision_per_class, recall_per_class, ap_per_class = validate_one_epoch(model, val_loader, device, num_classes)
+    metrics = validate_one_epoch(model, val_loader, device, num_classes)
 
 elif args.mode == "predict":
     model.load_state_dict(torch.load("fasterRCNNPT_ep-15_best.pth"))

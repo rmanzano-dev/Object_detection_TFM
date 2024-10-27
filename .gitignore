@@ -177,3 +177,7 @@ NuScenes_FasterRCNN/
 Waymo_FasterRCNN/
 Waymo_FasterRCNN_results/
 **.png
+**_results**
+*.bib
+*.gantt
+*.vscode
