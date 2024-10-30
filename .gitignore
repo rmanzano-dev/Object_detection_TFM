@@ -181,3 +181,7 @@ Waymo_FasterRCNN_results/
 *.bib
 *.gantt
 *.vscode
+**Metrics_**.json
+**.pdf**
+test_images/
+*.tgn

@@ -1,6 +1,7 @@
 import json
 import os
 
+import numpy as np
 import torch
 import torchvision
 import torchvision.transforms.functional
@@ -11,9 +12,12 @@ from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from tqdm import tqdm
 
 from argparser import get_args
-from metrics import get_metrics, get_precision_recall
+from metrics import (get_metrics, get_precision_recall,
+                     get_precision_recall_per_class,
+                     plot_precision_recall_curve)
 from utils import draw_boxes_opencv
 
+classes = ["VEHÍCULO", "PEATÓN", "CICLISTA"]
 
 # Load YOLOv8 annotations
 def load_yolov8_annotation(annotation_file, img_width, img_height):
@@ -153,17 +157,27 @@ def validate_one_epoch(model, data_loader, device, num_classes):
 
             # total_val_loss += losses.item()
 
+    metrics, precision_tensor  = get_metrics(all_predictions, all_targets)
+    precision_per_class, recall_per_class = get_precision_recall_per_class(all_predictions, all_targets)
 
-    metrics = get_metrics(all_predictions, all_targets)
     keep = ["map", "map_50", "map_per_class", "classes"]
     final_metrics = {k: metrics[k] for k in keep}
 
-    final_metrics["precision"], final_metrics["recall"] = get_precision_recall(all_predictions, all_targets)
-    
+    for idx, class_name in enumerate(classes):
+        final_metrics[class_name] = {}
+        final_metrics[class_name]["ap50"] = torch.mean(precision_tensor[0,:, idx, 0, 2]).cpu().tolist()
+        final_metrics[class_name]["precision"] = precision_per_class[idx+1]
+        final_metrics[class_name]["recall"] = recall_per_class[idx+1]
+        final_metrics[class_name]["ap5090"] = metrics["map_per_class"][idx].cpu().tolist()
+    final_metrics["precision"] = np.mean(list(precision_per_class.values()))
+    final_metrics["recall"] = np.mean(list(recall_per_class.values()))
     for key, value in final_metrics.items():
         if type(value) == torch.Tensor:
             final_metrics[key] = value.cpu().tolist()
 
+    with open(f"FasterRCNN_Metrics_Waymo.json", "w") as outfile: 
+        json.dump(final_metrics, outfile)
+    #plot_precision_recall_curve(precision_tensor, num_classes)
     return final_metrics 
 
 
@@ -208,25 +222,6 @@ def train_faster_rcnn_with_validation(model, train_loader, val_loader, num_epoch
 args = get_args()
 output_path = args.output_path
 
-if args.pretrained:
-    output_path = output_path + "_PT"
-    print(output_path)
-if not os.path.exists(output_path):
-    os.makedirs(output_path, exist_ok=False)
-# Example usage: Train and validation datasets
-images_dir_train = f'{args.input_path}/train/images'
-annotations_dir_train = f'{args.input_path}/train/labels'
-images_dir_val = f'{args.input_path}/validation/images'
-annotations_dir_val = f'{args.input_path}/validation/labels'
-
-# Create the train and validation datasets
-train_dataset = YoloToFasterRCNNDataset(images_dir_train, annotations_dir_train)
-val_dataset = YoloToFasterRCNNDataset(images_dir_val, annotations_dir_val)
-
-# Create data loaders for training and validation
-train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True, collate_fn=collate_fn)
-val_loader = DataLoader(val_dataset, shuffle=False, collate_fn=collate_fn)
-
 # Load the Faster R-CNN model with the number of classes (3 classes + background)
 num_classes = 4  # 3 classes (vehicle, pedestrian, cyclist) + 1 for background
 model = get_faster_rcnn_model(num_classes, pt=args.pretrained)
@@ -237,17 +232,22 @@ device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 num_epochs = args.epochs
 
 if args.mode == "val":
-
-    model.load_state_dict(torch.load("NuScenes_FasterRCNNFinal_results_PT/fasterRCNN_ep-30_best.pth"))
+    images_dir_val = f'{args.input_path}/validation/images'
+    annotations_dir_val = f'{args.input_path}/validation/labels'
+    val_dataset = YoloToFasterRCNNDataset(images_dir_val, annotations_dir_val)
+    val_loader = DataLoader(val_dataset, shuffle=False, collate_fn=collate_fn)
+    model.load_state_dict(torch.load("Waymo_FasterRCNNFinal_resultsT/fasterRCNN_ep-4_best.pth"))
 
     model.to(device)
     # class_names = ['__background__', 'VEHICLE', 'PEDESTRIAN', 'CYCLIST']
     metrics = validate_one_epoch(model, val_loader, device, num_classes)
 
 elif args.mode == "predict":
-    model.load_state_dict(torch.load("fasterRCNNPT_ep-15_best.pth"))
+    model.load_state_dict(torch.load("Waymo_FasterRCNNFinal_results/fasterRCNN_ep-4_best.pth"))
     image_path = args.img_path
 
+    import time
+    start_time = time.time()
     img = preprocess_image(image_path)
 
     # Move the image and model to the same device (CPU or GPU)
@@ -259,8 +259,28 @@ elif args.mode == "predict":
     with torch.no_grad():
         prediction = model(img)
 
-
-    class_names = ['__background__', 'VEHICLE', 'PEDESTRIAN', 'CYCLIST']
-    draw_boxes_opencv(image_path, prediction[0]["boxes"], prediction[0]["labels"], prediction[0]["scores"], threshold=0.1, class_names=class_names)
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    class_names = ['__background__', 'VEHICULO', 'PEATON', 'CICLISTA']
+    draw_boxes_opencv(image_path, args.output_path, prediction[0]["boxes"], prediction[0]["labels"], prediction[0]["scores"], threshold=0.5, class_names=class_names)
+    print("Time taken for prediction " + str(elapsed_time))
 else:
+    if args.pretrained:
+        output_path = output_path + "_PT"
+
+    if not os.path.exists(output_path):
+        os.makedirs(output_path, exist_ok=False)
+    # Example usage: Train and validation datasets
+    images_dir_train = f'{args.input_path}/train/images'
+    annotations_dir_train = f'{args.input_path}/train/labels'
+    images_dir_val = f'{args.input_path}/validation/images'
+    annotations_dir_val = f'{args.input_path}/validation/labels'
+
+    # Create the train and validation datasets
+    train_dataset = YoloToFasterRCNNDataset(images_dir_train, annotations_dir_train)
+    val_dataset = YoloToFasterRCNNDataset(images_dir_val, annotations_dir_val)
+
+    # Create data loaders for training and validation
+    train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True, collate_fn=collate_fn)
+    val_loader = DataLoader(val_dataset, shuffle=False, collate_fn=collate_fn)
     train_faster_rcnn_with_validation(model, train_loader, val_loader, num_epochs, device, num_classes=num_classes)

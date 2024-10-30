@@ -62,6 +62,7 @@ elif args.mode == "predict":
         images = [os.path.join(args.img_path, s) for s in os.listdir(args.img_path)]
         results = model.predict(images)
         end_time = time.time()
+        
     else:
         results = model.predict(args.img_path)
-        results[0].show()
+        results[0].save(args.output_path)

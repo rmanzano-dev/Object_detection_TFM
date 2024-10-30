@@ -3,7 +3,7 @@ import json
 import matplotlib.pyplot as plt
 
 # Folder where JSON files are stored
-folder_path = "Waymo_FasterRCNNPTFinal_results_PT"
+folder_path = "Waymo_FasterRCNNFinal_results"
 
 # Lists to store metric values
 epochs = []
@@ -39,7 +39,7 @@ plt.plot(epochs, recall_values, label="Recall", marker='o')
 
 dataset = folder_path.split("_")[0]
 # Customize plot
-plt.title(f"Evolución de las métricas por época en {dataset}, Pre-entrenado")
+plt.title(f"Evolución de las métricas por época en {dataset}, desde cero")
 plt.xlabel("Epochs")
 plt.ylabel("Metric Values")
 plt.legend()
@@ -47,5 +47,5 @@ plt.grid(True)
 plt.tight_layout()
 
 # Display the plot
-plt.savefig(f"Metrics_{dataset}_PT")
+plt.savefig(f"Metrics_{dataset}_Scratch")
 

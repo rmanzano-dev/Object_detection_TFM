@@ -3,6 +3,8 @@ from collections import defaultdict
 import numpy as np
 from tqdm import tqdm
 from torchmetrics.detection import MeanAveragePrecision, IntersectionOverUnion
+import matplotlib.pyplot as plt
+from sklearn.metrics import precision_recall_curve, average_precision_score
 
 def calculate_map_per_class(predictions, targets, num_classes, iou_threshold=0.5):
     # Calculate mAP@50 per class
@@ -169,109 +171,96 @@ def get_metrics(preds, targets):
     print("Getting metrics...")
 
     metrics = metric.compute()
-    return metrics
+    precision_tensor = metrics['precision']
+    recall_tensor = metrics["recall"]
 
-import torch
-from torchmetrics import Metric
-from torchvision.ops import box_iou
+    return metrics, precision_tensor
 
-class PrecisionRecallCurveObjectDetection(Metric):
-    """
-    Custom Precision-Recall Curve for Object Detection, with IoU thresholding for positive matches.
-    """
-    def __init__(self, iou_threshold=0.5, num_classes=80, dist_sync_on_step=False):
-        super().__init__(dist_sync_on_step=dist_sync_on_step)
-        self.iou_threshold = iou_threshold
-        self.num_classes = num_classes
-        # Initialize tensors to store predictions and targets for calculating precision-recall
-        self.add_state("preds", default=[], dist_reduce_fx="cat")
-        self.add_state("targets", default=[], dist_reduce_fx="cat")
 
-    def update(self, preds, targets):
-        """
-        Update state with predictions and targets.
-        
-        Parameters:
-            preds (list of dicts): Each dict has `boxes`, `scores`, and `labels` keys for predicted bounding boxes.
-            targets (list of dicts): Each dict has `boxes` and `labels` keys for ground truth bounding boxes.
-        """
-        for pred, target in zip(preds, targets):
-            pred_boxes = pred["boxes"]
-            pred_scores = pred["scores"]
-            pred_labels = pred["labels"]
-            
-            target_boxes = target["boxes"]
-            target_labels = target["labels"]
+def get_precision_recall_per_class(predictions, targets, iou_threshold=0.5):
+    """ Calculate precision and recall per class based on predictions and targets """
+    # Initialize dictionaries to keep counts for each class
+    true_positives = defaultdict(int)
+    false_positives = defaultdict(int)
+    false_negatives = defaultdict(int)
 
-            # Add predictions and ground truths to respective lists
-            self.preds.append({"boxes": pred_boxes, "scores": pred_scores, "labels": pred_labels})
-            self.targets.append({"boxes": target_boxes, "labels": target_labels})
+    for pred, target in tqdm(zip(predictions, targets)):
+        pred_boxes = pred['boxes'].cpu().numpy()
+        pred_scores = pred['scores'].cpu().numpy()
+        pred_labels = pred['labels'].cpu().numpy()
 
-    def compute(self):
-        """
-        Compute the precision-recall curve.
-        Returns:
-            precisions (list of Tensors): Precision values per class across different confidence thresholds.
-            recalls (list of Tensors): Recall values per class across different confidence thresholds.
-            thresholds (list of Tensors): Confidence thresholds corresponding to precision-recall points.
-        """
-        all_precisions = []
-        all_recalls = []
-        all_thresholds = []
+        tg_boxes = target['boxes'].cpu().numpy()
+        tg_labels = target['labels'].cpu().numpy()
 
-        # Process each class separately
-        for cls in range(self.num_classes):
-            cls_preds = []
-            cls_targets = []
+        # Track matched target boxes per label
+        matched_tg = defaultdict(set)
 
-            # Collect predictions and targets for this class
-            for pred, target in zip(self.preds, self.targets):
-                # Filter predictions and targets by class
-                cls_pred_mask = pred["labels"] == cls
-                cls_target_mask = target["labels"] == cls
-                
-                pred_boxes_cls = pred["boxes"][cls_pred_mask]
-                pred_scores_cls = pred["scores"][cls_pred_mask]
-                target_boxes_cls = target["boxes"][cls_target_mask]
+        # Sort predictions by score (highest first)
+        sorted_indices = np.argsort(-pred_scores)
+        pred_boxes = pred_boxes[sorted_indices]
+        pred_labels = pred_labels[sorted_indices]
 
-                # Add to class-specific lists
-                cls_preds.append((pred_boxes_cls, pred_scores_cls))
-                cls_targets.append(target_boxes_cls)
+        for pred_box, pred_label in zip(pred_boxes, pred_labels):
+            best_iou = 0
+            best_tg_idx = -1
 
-            # Concatenate all predictions and targets for this class
-            all_pred_boxes = torch.cat([p[0] for p in cls_preds])
-            all_scores = torch.cat([p[1] for p in cls_preds])
-            all_target_boxes = torch.cat(cls_targets)
+            for tg_idx, tg_box in enumerate(tg_boxes):
+                if tg_labels[tg_idx] == pred_label and tg_idx not in matched_tg[pred_label]:
+                    iou = compute_iou(pred_box, tg_box)
+                    if iou > best_iou and iou >= iou_threshold:
+                        best_iou = iou
+                        best_tg_idx = tg_idx
 
-            # Sort predictions by confidence score (descending)
-            sorted_scores, sorted_idx = all_scores.sort(descending=True)
-            sorted_pred_boxes = all_pred_boxes[sorted_idx]
-
-            # Calculate TP and FP with IoU thresholding
-            tp = torch.zeros_like(sorted_scores)
-            fp = torch.zeros_like(sorted_scores)
-            if len(all_target_boxes) == 0:
-                fp[:] = 1
+            if best_tg_idx >= 0:
+                true_positives[pred_label] += 1
+                matched_tg[pred_label].add(best_tg_idx)
             else:
-                matched_gt = set()
-                for i, pred_box in enumerate(sorted_pred_boxes):
-                    ious = box_iou(pred_box.unsqueeze(0), all_target_boxes).squeeze(0)
-                    max_iou, max_idx = ious.max(0)
-                    if max_iou >= self.iou_threshold and max_idx.item() not in matched_gt:
-                        tp[i] = 1
-                        matched_gt.add(max_idx.item())
-                    else:
-                        fp[i] = 1
+                false_positives[pred_label] += 1
 
-            # Calculate cumulative TP and FP for precision-recall
-            tp_cumsum = tp.cumsum(0)
-            fp_cumsum = fp.cumsum(0)
+        # Count remaining unmatched ground truth boxes as false negatives per class
+        for tg_idx, tg_label in enumerate(tg_labels):
+            if tg_idx not in matched_tg[tg_label]:
+                false_negatives[tg_label] += 1
 
-            precisions = tp_cumsum / (tp_cumsum + fp_cumsum + 1e-10)
-            recalls = tp_cumsum / len(all_target_boxes)
+    # Calculate precision and recall per class
+    precision_per_class = {}
+    recall_per_class = {}
+    for label in set(true_positives.keys()).union(false_positives.keys(), false_negatives.keys()):
+        tp = true_positives[label]
+        fp = false_positives[label]
+        fn = false_negatives[label]
+        
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+        
+        precision_per_class[label] = precision
+        recall_per_class[label] = recall
 
-            all_precisions.append(precisions)
-            all_recalls.append(recalls)
-            all_thresholds.append(sorted_scores)
+    return precision_per_class, recall_per_class
 
-        return all_precisions, all_recalls, all_thresholds
+def plot_precision_recall_curve(precision_tensor, num_classes):
+    recall_values = np.linspace(0, 1, 101)
+    plt.figure(figsize=(12, 6))
+
+    classes = ["VEHÍCULO", "PEATÓN", "CICLISTA"]
+
+    precision_values = []
+    # Iterate through each class and the total
+    for i, class_name in enumerate(classes):
+        precision_values.append(precision_tensor[0,:,i,0,2]) # Shape (T, R, K, A, M)
+        plt.plot(recall_values, precision_values[i], label=f'{class_name}', linewidth=2)
+
+    avg_precision = torch.mean(precision_tensor, dim=2)[0,:, 0, 2]
+
+    avg_prec_recall = torch.mean(avg_precision)
+    plt.plot(recall_values, avg_precision, label=f'all classes {np.round(avg_prec_recall, decimals=3)} mAP@50', linewidth=5, linestyle="--")
+    # Plotting the Precision-Recall curve
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.title(f'Curva Precision-Recall Curve para Waymo FasterR-CNN, desde cero')
+    plt.xlim(0.0, 1.0)
+    plt.ylim(0.0, 1.0)
+    plt.grid(True)
+    plt.legend()
+    #plt.savefig("PR_Curve_Waymo.png")
+    #plt.show()
