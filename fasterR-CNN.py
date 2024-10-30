@@ -243,27 +243,47 @@ if args.mode == "val":
     metrics = validate_one_epoch(model, val_loader, device, num_classes)
 
 elif args.mode == "predict":
-    model.load_state_dict(torch.load("Waymo_FasterRCNNFinal_results/fasterRCNN_ep-4_best.pth"))
+    model.load_state_dict(torch.load("Waymo_FasterRCNNPTFinal_results_PT/fasterRCNN_ep-6_best.pth"))
     image_path = args.img_path
 
     import time
+    
     start_time = time.time()
-    img = preprocess_image(image_path)
+    if os.path.isdir(args.img_path):
+        images = [os.path.join(args.img_path, s) for s in os.listdir(args.img_path)]
+        # Move the image and model to the same device (CPU or GPU)
+        device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+        model.eval()
+        model.to(device)
+        selected_len = 400
+        for img_path in tqdm(images[:selected_len]):
+            img = preprocess_image(img_path)
+            img = img.to(device)
 
-    # Move the image and model to the same device (CPU or GPU)
-    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-    model.eval()
-    model.to(device)
-    img = img.to(device)
+            with torch.no_grad():
+                prediction = model(img)
 
-    with torch.no_grad():
-        prediction = model(img)
+        end_time = time.time()
+        elapsed_time = ((end_time - start_time) / selected_len) * 1000
+        class_names = ['__background__', 'VEHICULO', 'PEATON', 'CICLISTA']
+        print("Time taken for prediction per image: " + str(elapsed_time) + " miliseconds")
+    else:
+        img = preprocess_image(image_path)
 
-    end_time = time.time()
-    elapsed_time = end_time - start_time
-    class_names = ['__background__', 'VEHICULO', 'PEATON', 'CICLISTA']
-    draw_boxes_opencv(image_path, args.output_path, prediction[0]["boxes"], prediction[0]["labels"], prediction[0]["scores"], threshold=0.5, class_names=class_names)
-    print("Time taken for prediction " + str(elapsed_time))
+        # Move the image and model to the same device (CPU or GPU)
+        device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+        model.eval()
+        model.to(device)
+        img = img.to(device)
+
+        with torch.no_grad():
+            prediction = model(img)
+
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        class_names = ['__background__', 'VEHICULO', 'PEATON', 'CICLISTA']
+        draw_boxes_opencv(image_path, args.output_path, prediction[0]["boxes"], prediction[0]["labels"], prediction[0]["scores"], threshold=0.5, class_names=class_names)
+        print("Time taken for prediction " + str(elapsed_time))
 else:
     if args.pretrained:
         output_path = output_path + "_PT"

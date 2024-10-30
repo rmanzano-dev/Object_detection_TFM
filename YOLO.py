@@ -3,6 +3,7 @@ import os
 from argparser import get_args
 import json
 import time
+from tqdm import tqdm
 args = get_args()
 # Load YOLO model, depending if pretrained or not
 if args.pretrained:
@@ -27,7 +28,7 @@ elif args.mode == "val":
     model = YOLO(f'{args.input_path}/weights/best.pt')  # Replace with the path to your trained model
 
     # Validate the model on your dataset
-    results = model.val(data='conf/nuScenes_data.yaml',project= args.output_path, name="validation_data")  # Replace with the path to your dataset config
+    results = model.val(data='conf/waymo_data.yaml',project= args.output_path, name="validation_data")  # Replace with the path to your dataset config
 
     # Get class names from the dataset
     class_names = results.names
@@ -60,9 +61,15 @@ elif args.mode == "predict":
     if os.path.isdir(args.img_path):
         start_time = time.time()
         images = [os.path.join(args.img_path, s) for s in os.listdir(args.img_path)]
-        results = model.predict(images)
+        # for image in tqdm(images):
+        #     results.append(model.predict(image))
+        selected_len = 400
+        model.predict(source=images[:selected_len])
+
         end_time = time.time()
-        
+        elapsed_time = ((end_time - start_time) / selected_len) * 1000
+        print("Time taken for prediction " + str(elapsed_time) + " miliseconds")
+
     else:
         results = model.predict(args.img_path)
         results[0].save(args.output_path)
